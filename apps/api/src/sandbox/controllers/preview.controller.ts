@@ -78,6 +78,46 @@ export class PreviewController {
     }
   }
 
+  // 0G patch: expose the sandbox's publicPorts allowlist to the preview proxy.
+  // Response is an object (not a bare array) so `null` (= unrestricted) is
+  // distinguishable from an empty body. Proxy-only route (API key guard),
+  // so returning data for private sandboxes leaks nothing.
+  @Get(':sandboxId/public-ports')
+  @ApiOperation({
+    summary: 'Get the public port allowlist of a sandbox',
+    operationId: 'getSandboxPublicPorts',
+  })
+  @ApiParam({
+    name: 'sandboxId',
+    description: 'ID of the sandbox',
+    type: 'string',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Public port allowlist of the sandbox (null = all ports follow the public flag)',
+  })
+  @AuthStrategy(AuthStrategyType.API_KEY)
+  @UseGuards(ProxyAuthContextGuard)
+  async getSandboxPublicPorts(@Param('sandboxId') sandboxId: string): Promise<{ publicPorts: number[] | null }> {
+    const cacheKey = `preview:public-ports:${sandboxId}`
+    const cached = await this.redis.get(cacheKey)
+    if (cached) {
+      if (cached === '404') {
+        throw new NotFoundException(`Sandbox with ID ${sandboxId} not found`)
+      }
+      return { publicPorts: JSON.parse(cached) }
+    }
+
+    const sandbox = await this.sandboxService.findOne(sandboxId)
+    if (!sandbox) {
+      await this.redis.setex(cacheKey, 3, '404')
+      throw new NotFoundException(`Sandbox with ID ${sandboxId} not found`)
+    }
+    const publicPorts = sandbox.publicPorts ?? null
+    await this.redis.setex(cacheKey, 3, JSON.stringify(publicPorts))
+    return { publicPorts }
+  }
+
   @Get(':sandboxId/validate/:authToken')
   @ApiOperation({
     summary: 'Check if sandbox auth token is valid',

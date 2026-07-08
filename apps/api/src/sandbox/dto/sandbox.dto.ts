@@ -97,6 +97,14 @@ export class SandboxDto {
   })
   public: boolean
 
+  // 0G patch
+  @ApiPropertyOptional({
+    description: 'When set on a public sandbox, only these ports are publicly accessible without auth',
+    type: [Number],
+    example: [8080, 3000],
+  })
+  publicPorts?: number[]
+
   @ApiProperty({
     description: 'Whether to block all network access for the sandbox',
     example: false,
@@ -326,6 +334,7 @@ export class SandboxDto {
       memory: sandbox.mem,
       disk: sandbox.disk,
       public: sandbox.public,
+      publicPorts: sandbox.publicPorts ?? undefined,
       networkBlockAll: sandbox.networkBlockAll,
       networkAllowList: sandbox.networkAllowList,
       labels: sandbox.labels,

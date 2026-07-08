@@ -167,6 +167,26 @@ export class SandboxService {
     }
   }
 
+  // 0G patch: reserved preview ports that publicPorts may never include —
+  // the proxy always authenticates these regardless of public status.
+  private static readonly RESERVED_PREVIEW_PORTS = [22222, 2280, 33333]
+
+  // 0G patch: normalize the publicPorts list at the DTO boundary (dedupe,
+  // sort ascending, reject reserved ports, reject empty arrays).
+  private normalizePublicPorts(ports?: number[]): number[] | null {
+    if (ports === undefined || ports === null) {
+      return null
+    }
+    if (ports.length === 0) {
+      throw new BadRequestError('publicPorts must not be empty; omit it to make all ports public')
+    }
+    const reserved = ports.filter((p) => SandboxService.RESERVED_PREVIEW_PORTS.includes(p))
+    if (reserved.length > 0) {
+      throw new BadRequestError(`publicPorts contains reserved ports: ${reserved.join(', ')}`)
+    }
+    return [...new Set(ports)].sort((a, b) => a - b)
+  }
+
   private async validateOrganizationQuotas(
     organization: Organization,
     region: Region,
@@ -647,6 +667,7 @@ export class SandboxService {
       sandbox.disk = disk
 
       sandbox.public = createSandboxDto.public || false
+      sandbox.publicPorts = this.normalizePublicPorts(createSandboxDto.publicPorts)
 
       if (createSandboxDto.networkBlockAll !== undefined) {
         sandbox.networkBlockAll = createSandboxDto.networkBlockAll
@@ -763,6 +784,7 @@ export class SandboxService {
     const now = new Date()
     const updateData: Partial<Sandbox> = {
       public: createSandboxDto.public || false,
+      publicPorts: this.normalizePublicPorts(createSandboxDto.publicPorts),
       labels: createSandboxDto.labels || {},
       organizationId: organization.id,
       createdAt: now,
@@ -908,6 +930,7 @@ export class SandboxService {
       sandbox.mem = mem
       sandbox.disk = disk
       sandbox.public = createSandboxDto.public || false
+      sandbox.publicPorts = this.normalizePublicPorts(createSandboxDto.publicPorts)
 
       if (createSandboxDto.networkBlockAll !== undefined) {
         sandbox.networkBlockAll = createSandboxDto.networkBlockAll
@@ -1118,6 +1141,7 @@ export class SandboxService {
       forkedSandbox.gpu = sourceSandbox.gpu
       forkedSandbox.gpuType = sourceSandbox.gpuType ?? null
       forkedSandbox.public = sourceSandbox.public
+      forkedSandbox.publicPorts = sourceSandbox.publicPorts ?? null
       forkedSandbox.autoStopInterval = sourceSandbox.autoStopInterval
       forkedSandbox.autoArchiveInterval = sourceSandbox.autoArchiveInterval
       forkedSandbox.autoDeleteInterval = sourceSandbox.autoDeleteInterval

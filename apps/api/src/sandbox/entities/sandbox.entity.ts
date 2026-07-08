@@ -125,6 +125,11 @@ export class Sandbox {
   @Column({ default: false, type: 'boolean' })
   public = false
 
+  // 0G patch: when set on a public sandbox, only these ports skip preview
+  // auth; all other ports fall back to the private-sandbox auth path.
+  @Column({ type: 'jsonb', nullable: true })
+  publicPorts?: number[] | null
+
   @Column({ default: false, type: 'boolean' })
   networkBlockAll = false
 

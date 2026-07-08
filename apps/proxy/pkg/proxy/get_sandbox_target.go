@@ -63,7 +63,20 @@ func (p *Proxy) GetProxyTarget(ctx *gin.Context) (*url.URL, map[string]string, e
 		return nil, nil, fmt.Errorf("failed to get sandbox public status: %w", err)
 	}
 
-	if !*isPublic || targetPort == TERMINAL_PORT || targetPort == TOOLBOX_PORT || targetPort == RECORDING_DASHBOARD_PORT {
+	requiresAuth := !*isPublic || targetPort == TERMINAL_PORT || targetPort == TOOLBOX_PORT || targetPort == RECORDING_DASHBOARD_PORT
+
+	// 0G patch: a public sandbox with a publicPorts allowlist only skips auth
+	// for listed ports; everything else falls back to the private auth path.
+	if !requiresAuth {
+		allowed, err := p.isPortPubliclyAllowed(ctx, sandboxIdOrSignedToken, targetPort)
+		if err != nil {
+			ctx.Error(common_errors.NewBadRequestError(fmt.Errorf("failed to get sandbox public ports: %w", err)))
+			return nil, nil, fmt.Errorf("failed to get sandbox public ports: %w", err)
+		}
+		requiresAuth = !allowed
+	}
+
+	if requiresAuth {
 		portFloat, err := strconv.ParseFloat(targetPort, 64)
 		if err != nil {
 			ctx.Error(common_errors.NewBadRequestError(fmt.Errorf("failed to parse target port: %w", err)))

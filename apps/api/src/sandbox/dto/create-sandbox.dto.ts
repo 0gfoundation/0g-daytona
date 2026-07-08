@@ -4,8 +4,10 @@
  */
 
 import {
+  ArrayMaxSize,
   ArrayMinSize,
   IsEnum,
+  IsInt,
   IsObject,
   IsOptional,
   IsString,
@@ -77,6 +79,22 @@ export class CreateSandboxDto {
   @IsOptional()
   @IsBoolean()
   public?: boolean
+
+  // 0G patch
+  @ApiPropertyOptional({
+    description:
+      'When set on a public sandbox, only these ports are publicly accessible without auth; ' +
+      'all other ports require preview authentication. Omit for all ports public.',
+    type: [Number],
+    example: [8080, 3000],
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(16)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  @Max(65535, { each: true })
+  publicPorts?: number[]
 
   @ApiPropertyOptional({
     description: 'Whether to block all network access for the sandbox',
