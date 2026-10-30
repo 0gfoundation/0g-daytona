@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,6 +19,10 @@ import (
 	"github.com/daytonaio/runner/pkg/runner"
 	"github.com/gin-gonic/gin"
 )
+
+// directPortPath matches the daemon's port proxy route, /proxy/<port>/<path>. The port
+// is parsed as the proxy parses it (strconv.Atoi), so every port it lets through matches.
+var directPortPath = regexp.MustCompile(`^/proxy/([+-]?[0-9]+)(/.*)?$`)
 
 // ProxyRequest handles proxying requests to a sandbox's container
 //
@@ -105,6 +110,30 @@ func getProxyTarget(ctx *gin.Context) (*url.URL, map[string]string, error) {
 		path = "/"
 	} else if !strings.HasPrefix(path, "/") {
 		path = "/" + path
+	}
+
+	// 0G: with no daemon in the sandbox nothing serves the toolbox port. Preview
+	// traffic (/proxy/<port>/...) goes straight to the container's port, so only
+	// services listening on the container's address (not loopback) are reachable;
+	// every other toolbox path has no target.
+	if runner.Docker.UsesSnapshotEntrypoint() {
+		m := directPortPath.FindStringSubmatch(path)
+		if m == nil {
+			err := errors.New("toolbox is not available: the sandbox runs without the daemon")
+			ctx.Error(common_errors.NewNotFoundError(err))
+			return nil, nil, err
+		}
+		port, err := strconv.Atoi(m[1])
+		if err != nil || port < 1 || port > 65535 {
+			err = fmt.Errorf("invalid port %q", m[1])
+			ctx.Error(common_errors.NewBadRequestError(err))
+			return nil, nil, err
+		}
+		targetURL = fmt.Sprintf("http://%s:%d", containerIP, port)
+		path = m[2]
+		if path == "" {
+			path = "/"
+		}
 	}
 
 	// Create the complete target URL with path

@@ -98,7 +98,7 @@ func (d *DockerClient) Start(ctx context.Context, containerId string, authToken 
 		return runningContainer, "", nil
 	}
 
-	if !slices.Equal(c.Config.Entrypoint, strslice.StrSlice{common.DAEMON_PATH}) {
+	if !d.useSnapshotEntrypoint && !slices.Equal(c.Config.Entrypoint, strslice.StrSlice{common.DAEMON_PATH}) {
 		processesCtx := context.Background()
 		go func() {
 			if err := d.startDaytonaDaemon(processesCtx, containerId, c.Config.WorkingDir); err != nil {
