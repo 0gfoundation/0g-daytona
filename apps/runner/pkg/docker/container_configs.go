@@ -162,9 +162,14 @@ func (d *DockerClient) getContainerCreateConfig(sandboxDto dto.CreateSandboxDTO,
 				cmd = append(cmd, image.Config.Entrypoint...)
 			}
 		}
-	} else if len(entrypoint) == 0 && slices.Equal(image.Config.Entrypoint, strslice.StrSlice{common.DAEMON_PATH}) {
-		// 0G: an image committed from a daemon-wrapped sandbox (an archive) still
-		// names the daemon as its entrypoint; run its original command instead.
+	} else if slices.Equal(entrypoint, []string{common.DAEMON_PATH}) ||
+		(len(entrypoint) == 0 && slices.Equal(image.Config.Entrypoint, strslice.StrSlice{common.DAEMON_PATH})) {
+		// 0G: an image committed from a daemon-wrapped sandbox (an archive, or a
+		// snapshot of one) names the daemon as its entrypoint; run the command the
+		// daemon wrapped instead.
+		if len(image.Config.Cmd) == 0 {
+			return nil, fmt.Errorf("snapshot %s runs the Daytona daemon as its entrypoint and has no command to run without it", sandboxDto.Snapshot)
+		}
 		entrypoint = image.Config.Cmd
 	}
 

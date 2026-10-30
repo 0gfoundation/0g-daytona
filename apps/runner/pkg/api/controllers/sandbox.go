@@ -438,7 +438,8 @@ func Info(ctx *gin.Context) {
 	}
 
 	var daemonVersion *string
-	if info.SandboxState == enums.SandboxStateStarted {
+	// 0G: no daemon runs in the sandbox with USE_SNAPSHOT_ENTRYPOINT; do not ask its port.
+	if info.SandboxState == enums.SandboxStateStarted && !runner.Docker.UsesSnapshotEntrypoint() {
 		daemonVersionStr, err := runner.Docker.GetDaemonVersion(ctx.Request.Context(), sandboxId)
 		if err == nil {
 			daemonVersion = &daemonVersionStr
