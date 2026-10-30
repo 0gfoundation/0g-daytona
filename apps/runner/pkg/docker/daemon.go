@@ -57,6 +57,11 @@ func (d *DockerClient) startDaytonaDaemon(ctx context.Context, containerId strin
 }
 
 func (d *DockerClient) waitForDaemonRunning(ctx context.Context, containerIP string, authToken *string) (string, error) {
+	// 0G: no daemon runs in the sandbox; a running container is ready.
+	if d.useSnapshotEntrypoint {
+		return "", nil
+	}
+
 	defer timer.Timer()()
 
 	tracer := otel.Tracer("runner")

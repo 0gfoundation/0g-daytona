@@ -19,6 +19,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// directPortPath matches the daemon's port proxy route, /proxy/<port>/<path>.
+var directPortPath = regexp.MustCompile(`^/proxy/([0-9]{1,5})(/.*)?$`)
+
 // ProxyRequest handles proxying requests to a sandbox's container
 //
 //	@Tags			toolbox
@@ -105,6 +108,18 @@ func getProxyTarget(ctx *gin.Context) (*url.URL, map[string]string, error) {
 		path = "/"
 	} else if !strings.HasPrefix(path, "/") {
 		path = "/" + path
+	}
+
+	// 0G: with no daemon in the sandbox, preview traffic (/proxy/<port>/...) goes
+	// straight to the container port the daemon would have proxied to.
+	if runner.Docker.UsesSnapshotEntrypoint() {
+		if m := directPortPath.FindStringSubmatch(path); m != nil {
+			targetURL = fmt.Sprintf("http://%s:%s", containerIP, m[1])
+			path = m[2]
+			if path == "" {
+				path = "/"
+			}
+		}
 	}
 
 	// Create the complete target URL with path

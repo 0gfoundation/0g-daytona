@@ -162,6 +162,10 @@ func (d *DockerClient) getContainerCreateConfig(sandboxDto dto.CreateSandboxDTO,
 				cmd = append(cmd, image.Config.Entrypoint...)
 			}
 		}
+	} else if len(entrypoint) == 0 && slices.Equal(image.Config.Entrypoint, strslice.StrSlice{common.DAEMON_PATH}) {
+		// 0G: an image committed from a daemon-wrapped sandbox (an archive) still
+		// names the daemon as its entrypoint; run its original command instead.
+		entrypoint = image.Config.Cmd
 	}
 
 	return &container.Config{
@@ -186,11 +190,15 @@ func (d *DockerClient) getContainerHostConfig(sandboxDto dto.CreateSandboxDTO, v
 
 	var binds []string
 
-	binds = append(binds, fmt.Sprintf("%s:%s:ro", d.daemonPath, common.DAEMON_PATH))
+	// 0G: with USE_SNAPSHOT_ENTRYPOINT the sandbox runs no daemon, so neither it
+	// nor its plugin is mounted.
+	if !d.useSnapshotEntrypoint {
+		binds = append(binds, fmt.Sprintf("%s:%s:ro", d.daemonPath, common.DAEMON_PATH))
 
-	// Mount the plugin if available
-	if d.computerUsePluginPath != "" {
-		binds = append(binds, fmt.Sprintf("%s:/usr/local/lib/daytona-computer-use:ro", d.computerUsePluginPath))
+		// Mount the plugin if available
+		if d.computerUsePluginPath != "" {
+			binds = append(binds, fmt.Sprintf("%s:/usr/local/lib/daytona-computer-use:ro", d.computerUsePluginPath))
+		}
 	}
 
 	if len(volumeMountPathBinds) > 0 {
@@ -198,12 +206,17 @@ func (d *DockerClient) getContainerHostConfig(sandboxDto dto.CreateSandboxDTO, v
 	}
 
 	hostConfig := &container.HostConfig{
-		// Privileged mode exposes every /dev/nvidia* node and bypasses the
-		// CDI cgroup rules, so GPU sandboxes have to opt out to keep their
-		// allocated card isolated. Non-GPU sandboxes still need privileged
-		// for their current workloads.
-		Privileged: gpuIndex == nil,
+		// 0G: no sandbox runs privileged; each gets only the capabilities below.
+		Privileged: false,
+		CapDrop:    []string{"ALL"},
+		CapAdd:     []string{"CHOWN", "DAC_OVERRIDE", "FOWNER", "SETUID", "SETGID", "KILL"},
 		Binds:      binds,
+	}
+
+	// 0G: without the daemon as PID 1, docker-init reaps orphans and forwards signals.
+	if d.useSnapshotEntrypoint {
+		useInit := true
+		hostConfig.Init = &useInit
 	}
 
 	if sandboxDto.OtelEndpoint != nil && strings.Contains(*sandboxDto.OtelEndpoint, "host.docker.internal") {
