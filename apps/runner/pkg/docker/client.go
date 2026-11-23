@@ -47,6 +47,8 @@ type DockerClientConfig struct {
 	InterSandboxNetworkEnabled   bool
 	GpuEnabled                   bool
 	MountKvmToAndroidSandbox     bool
+	// 0G: limit on each sandbox's processes and threads; 0 leaves it unset.
+	PidsLimit int64
 }
 
 func NewDockerClient(ctx context.Context, config DockerClientConfig) (*DockerClient, error) {
@@ -169,6 +171,7 @@ func NewDockerClient(ctx context.Context, config DockerClientConfig) (*DockerCli
 		gpuAllocator:                 newGpuAllocator(gpuCount),
 		filesystem:                   filesystem,
 		mountKvmToAndroidSandbox:     config.MountKvmToAndroidSandbox,
+		pidsLimit:                    config.PidsLimit,
 	}, nil
 }
 
@@ -228,4 +231,5 @@ type DockerClient struct {
 	gpuType                      string
 	gpuAllocator                 *gpuAllocator
 	mountKvmToAndroidSandbox     bool
+	pidsLimit                    int64
 }

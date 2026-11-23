@@ -16,6 +16,7 @@ import (
 	"github.com/daytonaio/runner/cmd/runner/config"
 	"github.com/daytonaio/runner/internal"
 	"github.com/daytonaio/runner/internal/metrics"
+	"github.com/daytonaio/runner/internal/sandboxusage"
 	"github.com/daytonaio/runner/pkg/api"
 	"github.com/daytonaio/runner/pkg/cache"
 	"github.com/daytonaio/runner/pkg/daemon"
@@ -31,6 +32,7 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/lmittmann/tint"
 	"github.com/mattn/go-isatty"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel"
 )
 
@@ -169,6 +171,7 @@ func run() int {
 		InterSandboxNetworkEnabled:   cfg.InterSandboxNetworkEnabled,
 		GpuEnabled:                   cfg.GpuEnabled,
 		MountKvmToAndroidSandbox:     cfg.MountKvmToAndroidSandbox,
+		PidsLimit:                    cfg.SandboxPidsLimit,
 	})
 	if err != nil {
 		logger.Error("Error creating Docker client wrapper", "error", err)
@@ -226,6 +229,18 @@ func run() int {
 		AllocatedResourcesSnapshotInterval: cfg.AllocatedResourcesSnapshotInterval,
 	})
 	metricsCollector.Start(ctx)
+
+	// 0G: each sandbox's own usage on /metrics, numbers only (0g-sandbox#148).
+	// Billing polls it to warn owners and stop sandboxes past their disk size.
+	usageCollector := sandboxusage.New(sandboxusage.Config{
+		Logger:                logger.With(slog.String("component", "sandbox_usage")),
+		Docker:                cli,
+		Interval:              cfg.SandboxUsageInterval,
+		LayerScanInterval:     cfg.SandboxLayerScanInterval,
+		LayerScanTriggerBytes: cfg.SandboxLayerScanTriggerMiB << 20,
+	})
+	prometheus.MustRegister(usageCollector)
+	usageCollector.Start(ctx)
 
 	_, err = runner.GetInstance(&runner.RunnerInstanceConfig{
 		Logger:             logger,

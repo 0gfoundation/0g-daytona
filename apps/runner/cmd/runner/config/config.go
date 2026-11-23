@@ -67,6 +67,11 @@ type Config struct {
 	BuildEngine                        string        `envconfig:"BUILD_ENGINE" default:"buildkit" validate:"oneof=buildkit legacy"`
 	ForceSnapshotRemoval               bool          `envconfig:"FORCE_SNAPSHOT_REMOVAL" default:"true"`
 	MountKvmToAndroidSandbox           bool          `envconfig:"MOUNT_KVM_TO_ANDROID_SANDBOX" default:"false"`
+	// 0G: per-sandbox task limit and usage metrics (0g-sandbox#148). A task limit of 0 leaves it unset.
+	SandboxPidsLimit           int64         `envconfig:"SANDBOX_PIDS_LIMIT" default:"4096" validate:"min=0"`
+	SandboxUsageInterval       time.Duration `envconfig:"SANDBOX_USAGE_INTERVAL" default:"30s" validate:"min=5s"`
+	SandboxLayerScanInterval   time.Duration `envconfig:"SANDBOX_LAYER_SCAN_INTERVAL" default:"5m" validate:"min=30s"`
+	SandboxLayerScanTriggerMiB uint64        `envconfig:"SANDBOX_LAYER_SCAN_TRIGGER_MIB" default:"2048"`
 }
 
 var DEFAULT_API_PORT int = 8080
