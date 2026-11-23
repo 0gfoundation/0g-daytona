@@ -25,6 +25,7 @@ type fakeDocker struct {
 	list    []container.Summary
 	inspect map[string]container.InspectResponse // by container ID, without size
 	sizes   map[string]int64                     // writable layer by container ID; missing → error
+	labels  map[string]map[string]string         // image labels by container ID
 	stats   map[string]container.StatsResponse
 }
 
@@ -42,7 +43,8 @@ func (f *fakeDocker) ContainerInspectWithRaw(_ context.Context, id string, getSi
 		if !ok {
 			return container.InspectResponse{}, nil, errors.New("size unavailable")
 		}
-		return container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{ID: id, SizeRw: &s}}, nil, nil
+		return container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{ID: id, SizeRw: &s},
+			Config: &container.Config{Labels: f.labels[id]}}, nil, nil
 	}
 	r, ok := f.inspect[id]
 	if !ok {
@@ -102,6 +104,8 @@ func newFixture(t *testing.T) *fixture {
 				}},
 			},
 			sizes: map[string]int64{"c1": 7 * gib, "c2": 11 * gib},
+			// c2 was restored from a backup that recorded 5 GiB of its data.
+			labels: map[string]map[string]string{"c2": {DataBytesLabel: "5368709120"}},
 			stats: map[string]container.StatsResponse{
 				"c1": {
 					CPUStats: container.CPUStats{
@@ -182,6 +186,8 @@ func TestCollect_RunningAndStoppedSandboxes(t *testing.T) {
 		"daytona_sandbox_network_transmit_bytes_total{sb-run}":               2000,
 		"daytona_sandbox_writable_layer_bytes{sb-run}":                       7 * gib,
 		"daytona_sandbox_writable_layer_bytes{sb-stop}":                      11 * gib,
+		"daytona_sandbox_data_bytes{sb-run}":                                 7 * gib,
+		"daytona_sandbox_data_bytes{sb-stop}":                                16 * gib, // 11 written since the restore + 5 carried
 		"daytona_sandbox_writable_layer_measured_timestamp_seconds{sb-run}":  float64(f.now.Unix()),
 		"daytona_sandbox_writable_layer_measured_timestamp_seconds{sb-stop}": float64(f.now.Unix()),
 		"daytona_runner_docker_volume_size_bytes":                            500 * gib,
@@ -321,5 +327,35 @@ func TestStatsFrom_PageCache(t *testing.T) {
 	none := statsFrom(container.StatsResponse{MemoryStats: container.MemoryStats{Usage: 500}})
 	if none.memoryBytes != 500 || none.hasNetwork {
 		t.Errorf("no page-cache key: got %d, network %v", none.memoryBytes, none.hasNetwork)
+	}
+}
+
+func TestCarriedBytes(t *testing.T) {
+	for in, want := range map[string]int64{"": 0, "123": 123, "-5": 0, "x": 0, "9223372036854775807": 9223372036854775807} {
+		labels := map[string]string{DataBytesLabel: in}
+		if in == "" {
+			labels = nil
+		}
+		if got := CarriedBytes(labels); got != want {
+			t.Errorf("CarriedBytes(%q) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+// A backup records what the container carried plus its writable layer, so the
+// data survives any number of backup and restore rounds.
+func TestBackupDataLabel(t *testing.T) {
+	if got := BackupDataLabel(nil, 3*gib); got != "LABEL ai.0g.sandbox.data-bytes=3221225472" {
+		t.Errorf("first backup: %s", got)
+	}
+	restored := map[string]string{DataBytesLabel: "3221225472"}
+	if got := BackupDataLabel(restored, gib); got != "LABEL ai.0g.sandbox.data-bytes=4294967296" {
+		t.Errorf("backup after a restore: %s", got)
+	}
+	if got := BackupDataLabel(restored, -1); got != "LABEL ai.0g.sandbox.data-bytes=3221225472" {
+		t.Errorf("unknown writable layer: %s", got)
+	}
+	if ClearedDataLabel != "LABEL ai.0g.sandbox.data-bytes=0" {
+		t.Errorf("ClearedDataLabel = %s", ClearedDataLabel)
 	}
 }

@@ -112,7 +112,8 @@ type stats struct {
 }
 
 type layer struct {
-	bytes      int64
+	bytes      int64 // the writable layer
+	carried    int64 // data carried over from earlier backups (DataBytesLabel)
 	measuredAt time.Time
 }
 
@@ -122,7 +123,7 @@ type volume struct {
 
 type descs struct {
 	running, cpuSeconds, cpuThrottled, cpuLimit, memory, memoryLimit, oomKills,
-	tasks, tasksLimit, rx, tx, layerBytes, layerMeasured,
+	tasks, tasksLimit, rx, tx, layerBytes, dataBytes, layerMeasured,
 	volumeSize, volumeUsed, volumeAvailable, refreshed *prometheus.Desc
 }
 
@@ -171,7 +172,8 @@ func New(cfg Config) *Collector {
 			rx:              prometheus.NewDesc("daytona_sandbox_network_receive_bytes_total", "Bytes the sandbox received.", sb, nil),
 			tx:              prometheus.NewDesc("daytona_sandbox_network_transmit_bytes_total", "Bytes the sandbox sent.", sb, nil),
 			layerBytes:      prometheus.NewDesc("daytona_sandbox_writable_layer_bytes", "Bytes the sandbox has written to its own filesystem layer.", sb, nil),
-			layerMeasured:   prometheus.NewDesc("daytona_sandbox_writable_layer_measured_timestamp_seconds", "When daytona_sandbox_writable_layer_bytes was measured.", sb, nil),
+			dataBytes:       prometheus.NewDesc("daytona_sandbox_data_bytes", "The sandbox's own data: its writable layer plus what it carried over from earlier backups, which a restore puts under a fresh writable layer.", sb, nil),
+			layerMeasured:   prometheus.NewDesc("daytona_sandbox_writable_layer_measured_timestamp_seconds", "When daytona_sandbox_writable_layer_bytes and daytona_sandbox_data_bytes were measured.", sb, nil),
 			volumeSize:      prometheus.NewDesc("daytona_runner_docker_volume_size_bytes", "Size of the filesystem holding the sandboxes' layers.", nil, nil),
 			volumeUsed:      prometheus.NewDesc("daytona_runner_docker_volume_used_bytes", "Used bytes of the filesystem holding the sandboxes' layers.", nil, nil),
 			volumeAvailable: prometheus.NewDesc("daytona_runner_docker_volume_available_bytes", "Bytes available to unprivileged writers on that filesystem.", nil, nil),
@@ -413,7 +415,11 @@ func (c *Collector) scanLayers(ctx context.Context) {
 			c.log.DebugContext(ctx, "sandbox usage: size layer", "container", s.ID, "error", err)
 			continue
 		}
-		measured[id] = layer{bytes: *info.SizeRw, measuredAt: c.cfg.Now()}
+		var labels map[string]string
+		if info.Config != nil {
+			labels = info.Config.Labels
+		}
+		measured[id] = layer{bytes: *info.SizeRw, carried: CarriedBytes(labels), measuredAt: c.cfg.Now()}
 		if ctx.Err() != nil {
 			return
 		}
@@ -453,7 +459,7 @@ func statfsUsage(ctx context.Context, path string) (uint64, uint64, uint64, erro
 func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 	d := c.desc
 	for _, x := range []*prometheus.Desc{d.running, d.cpuSeconds, d.cpuThrottled, d.cpuLimit, d.memory, d.memoryLimit,
-		d.oomKills, d.tasks, d.tasksLimit, d.rx, d.tx, d.layerBytes, d.layerMeasured,
+		d.oomKills, d.tasks, d.tasksLimit, d.rx, d.tx, d.layerBytes, d.dataBytes, d.layerMeasured,
 		d.volumeSize, d.volumeUsed, d.volumeAvailable, d.refreshed} {
 		ch <- x
 	}
@@ -501,6 +507,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		}
 		if l, ok := c.layers[id]; ok {
 			gauge(d.layerBytes, float64(l.bytes), id)
+			gauge(d.dataBytes, float64(l.bytes+l.carried), id)
 			gauge(d.layerMeasured, float64(l.measuredAt.Unix()), id)
 		}
 	}
