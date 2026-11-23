@@ -10,6 +10,7 @@ import (
 
 	"github.com/containerd/errdefs"
 	"github.com/daytonaio/common-go/pkg/utils"
+	"github.com/daytonaio/runner/internal/sandboxusage"
 	"github.com/daytonaio/runner/pkg/api/dto"
 	"github.com/daytonaio/runner/pkg/common"
 
@@ -112,6 +113,11 @@ func (d *DockerClient) ContainerDiskResize(ctx context.Context, sandboxId string
 		newHostConfig.StorageOpt = make(map[string]string)
 	}
 	newHostConfig.StorageOpt["size"] = fmt.Sprintf("%d", newStorageBytes)
+	// 0G: keep the recorded disk size in step (internal/sandboxusage).
+	if originalContainer.Config.Labels == nil {
+		originalContainer.Config.Labels = map[string]string{}
+	}
+	originalContainer.Config.Labels[sandboxusage.DiskLimitLabel] = sandboxusage.DiskLimitLabelValue(newStorageBytes)
 	d.logger.DebugContext(ctx, "Setting storage", "bytes", newStorageBytes, "gigabytes", float64(newStorageBytes)/(1024*1024*1024), "filesystem", d.filesystem)
 
 	// Apply CPU/memory changes if specified (0 = don't change)

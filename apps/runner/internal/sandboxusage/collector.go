@@ -62,6 +62,10 @@ type Config struct {
 	// VolumeUsage defaults to statfs through gopsutil.
 	VolumeUsage VolumeUsageFunc
 	Now         func() time.Time
+	// EnvDir holds one directory per sandbox, mounted into it at EnvMountPath
+	// (pkg/docker), where the collector writes the sandbox's own limits and
+	// use. "" writes nothing.
+	EnvDir string
 }
 
 const (
@@ -98,6 +102,7 @@ type reading struct {
 	cpuLimitCores float64
 	memoryLimit   uint64
 	pidsLimit     int64
+	diskLimit     int64   // DiskLimitLabel; 0 when unknown
 	stats         *stats  // nil when not running or unreadable
 	oomKills      *uint64 // nil when the cgroup's memory.events is unreadable
 }
@@ -260,6 +265,7 @@ func (c *Collector) refresh(ctx context.Context) {
 		default:
 		}
 	}
+	c.writeEnvFiles(true)
 }
 
 func (c *Collector) readRunning(ctx context.Context, r *reading) {
@@ -280,6 +286,9 @@ func (c *Collector) readRunning(ctx context.Context, r *reading) {
 			if hc.PidsLimit != nil && *hc.PidsLimit > 0 {
 				r.pidsLimit = *hc.PidsLimit
 			}
+		}
+		if info.Config != nil {
+			r.diskLimit = diskLimit(info.Config.Labels)
 		}
 		if info.State != nil && info.State.Pid > 0 {
 			if n, ok := c.readOOMKills(info.State.Pid); ok {
@@ -434,7 +443,6 @@ func (c *Collector) scanLayers(ctx context.Context) {
 	}
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	next := make(map[string]layer, len(list))
 	for _, s := range list {
 		id := sandboxID(s)
@@ -445,6 +453,8 @@ func (c *Collector) scanLayers(ctx context.Context) {
 		}
 	}
 	c.layers = next
+	c.mu.Unlock()
+	c.writeEnvFiles(false) // the new sizes, without waiting for a refresh
 }
 
 // sandboxID is the container's name, which the runner sets to the sandbox ID.

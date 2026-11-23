@@ -49,6 +49,9 @@ type DockerClientConfig struct {
 	MountKvmToAndroidSandbox     bool
 	// 0G: limit on each sandbox's processes and threads; 0 leaves it unset.
 	PidsLimit int64
+	// 0G: directory of the per-sandbox environment directories mounted at
+	// sandboxusage.EnvMountPath; "" mounts none.
+	SandboxEnvDir string
 }
 
 func NewDockerClient(ctx context.Context, config DockerClientConfig) (*DockerClient, error) {
@@ -172,6 +175,7 @@ func NewDockerClient(ctx context.Context, config DockerClientConfig) (*DockerCli
 		filesystem:                   filesystem,
 		mountKvmToAndroidSandbox:     config.MountKvmToAndroidSandbox,
 		pidsLimit:                    config.PidsLimit,
+		sandboxEnvDir:                config.SandboxEnvDir,
 	}, nil
 }
 
@@ -232,4 +236,5 @@ type DockerClient struct {
 	gpuAllocator                 *gpuAllocator
 	mountKvmToAndroidSandbox     bool
 	pidsLimit                    int64
+	sandboxEnvDir                string
 }

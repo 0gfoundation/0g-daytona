@@ -172,6 +172,7 @@ func run() int {
 		GpuEnabled:                   cfg.GpuEnabled,
 		MountKvmToAndroidSandbox:     cfg.MountKvmToAndroidSandbox,
 		PidsLimit:                    cfg.SandboxPidsLimit,
+		SandboxEnvDir:                cfg.SandboxEnvDir,
 	})
 	if err != nil {
 		logger.Error("Error creating Docker client wrapper", "error", err)
@@ -238,6 +239,7 @@ func run() int {
 		Interval:              cfg.SandboxUsageInterval,
 		LayerScanInterval:     cfg.SandboxLayerScanInterval,
 		LayerScanTriggerBytes: cfg.SandboxLayerScanTriggerMiB << 20,
+		EnvDir:                cfg.SandboxEnvDir,
 	})
 	prometheus.MustRegister(usageCollector)
 	usageCollector.Start(ctx)
