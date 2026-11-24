@@ -23,7 +23,8 @@ import (
 // start (ClearEnvFile), so nothing from before a stop is read after it: it is
 // missing for up to a refresh interval after every start. A reader should
 // treat a missing field as unknown, and judge the numbers by updated_at and
-// disk.measured_at. Times are whole seconds.
+// disk.measured_at. Times are whole seconds. It is also rewritten whenever
+// billing sends notices (notices.go).
 const (
 	EnvMountPath = "/run/0g"
 	EnvFileName  = "environment.json"
@@ -49,6 +50,9 @@ type environment struct {
 	Memory    *envMemory `json:"memory,omitempty"`
 	Tasks     *envTasks  `json:"tasks,omitempty"`
 	Disk      *envDisk   `json:"disk,omitempty"`
+	// Notices are the provider's warnings (notices.go): absent while billing
+	// sends none, empty when there is nothing to warn about.
+	Notices *[]Notice `json:"notices,omitempty"`
 }
 
 type envCPU struct {
@@ -110,6 +114,7 @@ func (c *Collector) envFor(id string, r *reading, at time.Time) environment {
 		disk.UsedBytes, disk.MeasuredAt = &used, &at
 	}
 	e.Disk = disk
+	e.Notices = c.noticesFor(id, at)
 	return e
 }
 
@@ -121,6 +126,8 @@ func (c *Collector) writeEnvFiles(removeOrphans bool) {
 	if dir == "" {
 		return
 	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	now := c.cfg.Now()
 	c.mu.Lock()
 	envs := make([]environment, 0, len(c.sandboxes))

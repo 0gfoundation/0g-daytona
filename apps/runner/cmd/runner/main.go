@@ -316,6 +316,8 @@ func run() int {
 		TLSKeyFile:  cfg.TLSKeyFile,
 		EnableTLS:   cfg.EnableTLS,
 		LogRequests: cfg.ApiLogRequests,
+
+		SandboxNotices: usageCollector,
 	})
 
 	apiServerErrChan := make(chan error)
