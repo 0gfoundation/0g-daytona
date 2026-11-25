@@ -92,6 +92,13 @@ type Collector struct {
 	refreshedAt    time.Time
 	usedAtLastScan uint64
 	scanned        bool
+	// notices are billing's, by sandbox ID, shown until noticesUntil.
+	notices      map[string][]Notice
+	noticesUntil time.Time
+
+	// writeMu serialises writing the environment files, so an older reading
+	// never replaces a newer one. Taken before mu.
+	writeMu sync.Mutex
 
 	desc descs
 }

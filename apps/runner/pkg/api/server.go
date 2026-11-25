@@ -53,6 +53,8 @@ type ApiServerConfig struct {
 	TLSKeyFile  string
 	EnableTLS   bool
 	LogRequests bool
+	// SandboxNotices takes billing's notices to sandboxes (0G).
+	SandboxNotices controllers.NoticeSetter
 }
 
 func NewApiServer(config ApiServerConfig) *ApiServer {
@@ -64,6 +66,8 @@ func NewApiServer(config ApiServerConfig) *ApiServer {
 		tlsKeyFile:  config.TLSKeyFile,
 		enableTLS:   config.EnableTLS,
 		logRequests: config.LogRequests,
+
+		sandboxNotices: config.SandboxNotices,
 	}
 }
 
@@ -77,6 +81,8 @@ type ApiServer struct {
 	httpServer  *http.Server
 	router      *gin.Engine
 	logRequests bool
+
+	sandboxNotices controllers.NoticeSetter
 }
 
 func (a *ApiServer) Start(ctx context.Context) error {
@@ -124,6 +130,9 @@ func (a *ApiServer) Start(ctx context.Context) error {
 	{
 		metricsController.GET("", gin.WrapH(promhttp.Handler()))
 	}
+
+	// 0G: billing's warnings to sandboxes, shown in their environment files.
+	protected.PUT("/sandbox-notices", controllers.SetSandboxNotices(a.sandboxNotices))
 
 	infoController := protected.Group("/info")
 	{
