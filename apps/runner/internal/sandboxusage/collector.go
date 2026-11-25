@@ -303,6 +303,12 @@ func (c *Collector) readRunning(ctx context.Context, r *reading) {
 		c.log.DebugContext(ctx, "sandbox usage: decode stats", "container", r.containerID, "error", err)
 		return
 	}
+	// A container that stopped since the list answers with an empty reading,
+	// not an error; its zeros would look like a counter reset.
+	if st.Read.IsZero() {
+		c.log.DebugContext(ctx, "sandbox usage: empty stats", "container", r.containerID)
+		return
+	}
 	r.stats = statsFrom(st)
 }
 
@@ -411,7 +417,9 @@ func (c *Collector) scanLayers(ctx context.Context) {
 		lctx, cancel := context.WithTimeout(ctx, layerSizeTimeout)
 		info, _, err := c.cfg.Docker.ContainerInspectWithRaw(lctx, s.ID, true)
 		cancel()
-		if err != nil || info.SizeRw == nil {
+		// Docker reports a size it could not take as -1, with no error. The
+		// last size stays, with its own measured time.
+		if err != nil || info.ContainerJSONBase == nil || info.SizeRw == nil || *info.SizeRw < 0 {
 			c.log.DebugContext(ctx, "sandbox usage: size layer", "container", s.ID, "error", err)
 			continue
 		}

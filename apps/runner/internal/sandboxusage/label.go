@@ -20,11 +20,16 @@ const DataBytesLabel = "ai.0g.sandbox.data-bytes"
 // as their base and do not own it.
 const ClearedDataLabel = "LABEL " + DataBytesLabel + "=0"
 
+// maxCarriedBytes bounds the label. No sandbox carries a pebibyte; a larger
+// value comes from an image this runner did not label, and would overflow
+// the sums it goes into.
+const maxCarriedBytes = 1 << 50
+
 // CarriedBytes is the data a container carries over from its image: the
-// label's value, 0 when absent or not a non-negative integer.
+// label's value, 0 when absent or not an integer from 0 to maxCarriedBytes.
 func CarriedBytes(labels map[string]string) int64 {
 	v, err := strconv.ParseInt(labels[DataBytesLabel], 10, 64)
-	if err != nil || v < 0 {
+	if err != nil || v < 0 || v > maxCarriedBytes {
 		return 0
 	}
 	return v

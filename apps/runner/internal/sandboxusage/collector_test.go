@@ -108,6 +108,7 @@ func newFixture(t *testing.T) *fixture {
 			labels: map[string]map[string]string{"c2": {DataBytesLabel: "5368709120"}},
 			stats: map[string]container.StatsResponse{
 				"c1": {
+					Read: time.Unix(1_800_000_000, 0),
 					CPUStats: container.CPUStats{
 						CPUUsage:       container.CPUUsage{TotalUsage: 12_500_000_000},
 						ThrottlingData: container.ThrottlingData{ThrottledTime: 3_000_000_000},
@@ -276,6 +277,33 @@ func TestLayerScan_KeepsLastSizeWhenSizingFails(t *testing.T) {
 		got["daytona_sandbox_writable_layer_measured_timestamp_seconds{sb-stop}"] != float64(f.now.Unix()) {
 		t.Errorf("sb-stop: want the new size and timestamp")
 	}
+
+	// Docker reports a size it could not take as -1, with no error: not a
+	// reading either.
+	f.now = f.now.Add(5 * time.Minute)
+	f.docker.sizes["c2"] = -1
+	f.c.scanLayers(context.Background())
+	got = values(t, f.c)
+	if got["daytona_sandbox_writable_layer_bytes{sb-stop}"] != 12*gib || got["daytona_sandbox_data_bytes{sb-stop}"] != 17*gib ||
+		got["daytona_sandbox_writable_layer_measured_timestamp_seconds{sb-stop}"] != float64(f.now.Add(-5*time.Minute).Unix()) {
+		t.Errorf("sb-stop sized -1: want the last size and its timestamp, got layer %v, data %v at %v",
+			got["daytona_sandbox_writable_layer_bytes{sb-stop}"], got["daytona_sandbox_data_bytes{sb-stop}"],
+			got["daytona_sandbox_writable_layer_measured_timestamp_seconds{sb-stop}"])
+	}
+}
+
+// A container that stops between the list and its stats call gets an empty
+// reading from Docker, not an error.
+func TestRefresh_EmptyStatsOmitted(t *testing.T) {
+	f := newFixture(t)
+	f.docker.stats["c1"] = container.StatsResponse{}
+	f.c.refresh(context.Background())
+	got := values(t, f.c)
+	for _, k := range []string{"daytona_sandbox_cpu_seconds_total{sb-run}", "daytona_sandbox_memory_bytes{sb-run}", "daytona_sandbox_tasks{sb-run}"} {
+		if _, ok := got[k]; ok {
+			t.Errorf("%s exported from an empty reading", k)
+		}
+	}
 }
 
 func TestRefresh_UnreadableStatsAndCgroupOmitThoseMetrics(t *testing.T) {
@@ -331,7 +359,12 @@ func TestStatsFrom_PageCache(t *testing.T) {
 }
 
 func TestCarriedBytes(t *testing.T) {
-	for in, want := range map[string]int64{"": 0, "123": 123, "-5": 0, "x": 0, "9223372036854775807": 9223372036854775807} {
+	for in, want := range map[string]int64{
+		"": 0, "123": 123, "-5": 0, "x": 0,
+		"1125899906842624":    1 << 50, // the bound
+		"1125899906842625":    0,       // past it: not a label this runner wrote
+		"9223372036854775807": 0,       // would overflow the sums
+	} {
 		labels := map[string]string{DataBytesLabel: in}
 		if in == "" {
 			labels = nil
