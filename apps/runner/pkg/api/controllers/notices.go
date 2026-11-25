@@ -45,7 +45,13 @@ func SetSandboxNotices(setter NoticeSetter) gin.HandlerFunc {
 			ctx.Error(common_errors.NewInvalidBodyRequestError(err))
 			return
 		}
-		err := setter.SetNotices(req.Sandboxes, time.Duration(req.ValidForSec)*time.Second)
+		// Seconds past the bound would overflow the Duration and could wrap back
+		// into range; SetNotices refuses the bound plus a second.
+		validFor := sandboxusage.MaxNoticeValidity + time.Second
+		if req.ValidForSec <= int64(sandboxusage.MaxNoticeValidity/time.Second) {
+			validFor = time.Duration(req.ValidForSec) * time.Second
+		}
+		err := setter.SetNotices(req.Sandboxes, validFor)
 		switch {
 		case errors.Is(err, sandboxusage.ErrNoticesOff):
 			ctx.Error(common_errors.NewCustomError(http.StatusNotImplemented, err.Error(), "NOTICES_OFF"))

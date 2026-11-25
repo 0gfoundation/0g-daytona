@@ -53,6 +53,14 @@ func TestSetSandboxNotices(t *testing.T) {
 	if w := putNotices(t, s, `{"sandboxes":`); w.Code != http.StatusBadRequest {
 		t.Errorf("malformed body: status = %d", w.Code)
 	}
+	// 18446744074 s in nanoseconds wraps to about 0.29 s: it must reach the
+	// setter as out of range, not as a short validity.
+	for _, secs := range []string{"18446744074", "9223372036854775807", "3601"} {
+		putNotices(t, s, `{"valid_for_sec":`+secs+`,"sandboxes":{}}`)
+		if s.validFor <= sandboxusage.MaxNoticeValidity {
+			t.Errorf("valid_for_sec %s reached the setter as %s", secs, s.validFor)
+		}
+	}
 	s.err = fmt.Errorf("%w: kind", sandboxusage.ErrInvalidNotices)
 	if w := putNotices(t, s, `{}`); w.Code != http.StatusBadRequest {
 		t.Errorf("invalid set: status = %d", w.Code)
