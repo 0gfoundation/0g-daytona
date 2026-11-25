@@ -19,9 +19,11 @@ import (
 // It is replaced whole, by rename: a reader never sees half a file, and a
 // directory mount (unlike a file mount) shows each new version.
 //
-// The file can be missing for a sandbox's first refresh interval, and is
-// written only while its container runs. A reader should treat a missing
-// field as unknown, and judge the numbers by updated_at and disk.measured_at.
+// The file is written only while its container runs, and removed before each
+// start (ClearEnvFile), so nothing from before a stop is read after it: it is
+// missing for up to a refresh interval after every start. A reader should
+// treat a missing field as unknown, and judge the numbers by updated_at and
+// disk.measured_at. Times are whole seconds.
 const (
 	EnvMountPath = "/run/0g"
 	EnvFileName  = "environment.json"
@@ -91,7 +93,9 @@ func DiskLimitLabelValue(bytes int64) string {
 // envFor builds a running sandbox's file from a reading and its last layer
 // size. c.mu must be held.
 func (c *Collector) envFor(id string, r *reading, at time.Time) environment {
-	e := environment{Version: envSchemaVersion, SandboxID: id, UpdatedAt: at.UTC()}
+	// Whole seconds: finer times would show how long a pass over the other
+	// sandboxes on this runner took.
+	e := environment{Version: envSchemaVersion, SandboxID: id, UpdatedAt: at.UTC().Truncate(time.Second)}
 	cpu, mem, tasks := &envCPU{LimitCores: r.cpuLimitCores}, &envMemory{LimitBytes: r.memoryLimit, OOMKillsTotal: r.oomKills}, &envTasks{Limit: r.pidsLimit}
 	if s := r.stats; s != nil {
 		used, throttled, memUsed, cur := s.cpuSeconds, s.cpuThrottledSeconds, s.memoryBytes, s.tasks
@@ -102,7 +106,7 @@ func (c *Collector) envFor(id string, r *reading, at time.Time) environment {
 	e.CPU, e.Memory, e.Tasks = cpu, mem, tasks
 	disk := &envDisk{LimitBytes: r.diskLimit}
 	if l, ok := c.layers[id]; ok {
-		used, at := l.bytes+l.carried, l.measuredAt.UTC()
+		used, at := l.bytes+l.carried, l.measuredAt.UTC().Truncate(time.Second)
 		disk.UsedBytes, disk.MeasuredAt = &used, &at
 	}
 	e.Disk = disk
@@ -146,16 +150,37 @@ func (c *Collector) writeEnvFiles(removeOrphans bool) {
 		return
 	}
 	for _, ent := range entries {
-		if known[ent.Name()] || !ent.IsDir() {
+		if known[ent.Name()] || !ent.IsDir() || !validEnvName(ent.Name()) {
 			continue
 		}
 		if info, err := ent.Info(); err != nil || now.Sub(info.ModTime()) < orphanEnvDirAge {
 			continue
 		}
-		if err := os.RemoveAll(filepath.Join(dir, ent.Name())); err != nil {
-			c.log.Warn("sandbox usage: remove environment directory", "sandbox", ent.Name(), "error", err)
+		// The file, then the directory only if that leaves it empty: whatever
+		// else a misconfigured EnvDir holds is not the runner's to delete.
+		sub := filepath.Join(dir, ent.Name())
+		if err := os.Remove(filepath.Join(sub, EnvFileName)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			c.log.Warn("sandbox usage: remove environment file", "sandbox", ent.Name(), "error", err)
+			continue
+		}
+		if err := os.Remove(sub); err != nil {
+			c.log.Debug("sandbox usage: keep environment directory", "sandbox", ent.Name(), "error", err)
 		}
 	}
+}
+
+// ClearEnvFile removes a sandbox's file before its container starts. The
+// collector writes the file only while the container runs, so it still holds
+// what it held at the sandbox's last run, which its program must not take as
+// current. With no file a reader knows nothing until the next refresh.
+func ClearEnvFile(envDir, sandboxID string) error {
+	if envDir == "" || !validEnvName(sandboxID) {
+		return nil
+	}
+	if err := os.Remove(filepath.Join(envDir, sandboxID, EnvFileName)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 // writeEnvFile replaces dir/EnvFileName with e, by rename.

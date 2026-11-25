@@ -41,8 +41,10 @@ func readEnv(t *testing.T, dir, id string) map[string]any {
 func TestEnvFile_RunningSandboxSeesItsOwnLimitsAndUse(t *testing.T) {
 	f := newFixture(t)
 	dir := withEnvDir(t, f)
+	f.now = f.now.Add(123456789 * time.Nanosecond) // the file shows whole seconds
 	f.c.refresh(context.Background())
 	f.c.scanLayers(context.Background())
+	second := f.now.Truncate(time.Second)
 
 	e := readEnv(t, dir, "sb-run")
 	b, _ := json.Marshal(e)
@@ -50,7 +52,7 @@ func TestEnvFile_RunningSandboxSeesItsOwnLimitsAndUse(t *testing.T) {
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatal(err)
 	}
-	if got.Version != 1 || got.SandboxID != "sb-run" || !got.UpdatedAt.Equal(f.now) {
+	if got.Version != 1 || got.SandboxID != "sb-run" || !got.UpdatedAt.Equal(second) {
 		t.Errorf("header = %d %q %v", got.Version, got.SandboxID, got.UpdatedAt)
 	}
 	if c := got.CPU; c == nil || c.LimitCores != 2 || *c.UsedSecondsTotal != 12.5 || *c.ThrottledSecondsTotal != 3 {
@@ -62,7 +64,7 @@ func TestEnvFile_RunningSandboxSeesItsOwnLimitsAndUse(t *testing.T) {
 	if k := got.Tasks; k == nil || *k.Current != 37 || k.Limit != 4096 {
 		t.Errorf("tasks = %+v", k)
 	}
-	if d := got.Disk; d == nil || d.LimitBytes != 10*gib || *d.UsedBytes != 7*gib || !d.MeasuredAt.Equal(f.now) {
+	if d := got.Disk; d == nil || d.LimitBytes != 10*gib || *d.UsedBytes != 7*gib || !d.MeasuredAt.Equal(second) {
 		t.Errorf("disk = %+v", d)
 	}
 
@@ -104,26 +106,58 @@ func TestEnvFile_OffWithoutDir(t *testing.T) {
 
 // A sandbox's directory goes once it has had no container for a while; one
 // still listed, or gone only briefly (an archive about to be restored), stays.
+// Only the file and an emptied directory are removed: anything else in a
+// misconfigured EnvDir stays.
 func TestEnvFile_OrphanDirectoriesRemovedAfterAWhile(t *testing.T) {
 	f := newFixture(t)
 	dir := withEnvDir(t, f)
-	for _, id := range []string{"sb-gone", "sb-brief", "sb-stop"} {
+	for _, id := range []string{"sb-gone", "sb-gone-file", "sb-foreign", "sb-brief", "sb-stop"} {
 		if err := os.MkdirAll(filepath.Join(dir, id), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
+	for _, p := range []string{"sb-gone-file/" + EnvFileName, "sb-foreign/" + EnvFileName, "sb-foreign/data"} {
+		if err := os.WriteFile(filepath.Join(dir, p), []byte("{}"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 	old := time.Now().Add(-time.Hour)
-	for _, id := range []string{"sb-gone", "sb-stop"} {
+	for _, id := range []string{"sb-gone", "sb-gone-file", "sb-foreign", "sb-stop"} {
 		if err := os.Chtimes(filepath.Join(dir, id), old, old); err != nil {
 			t.Fatal(err)
 		}
 	}
 	f.now = time.Now()
 	f.c.refresh(context.Background())
-	for id, want := range map[string]bool{"sb-gone": false, "sb-brief": true, "sb-stop": true, "sb-run": true} {
-		_, err := os.Stat(filepath.Join(dir, id))
+	for p, want := range map[string]bool{
+		"sb-gone": false, "sb-gone-file": false, "sb-brief": true, "sb-stop": true, "sb-run": true,
+		"sb-foreign/data": true, "sb-foreign/" + EnvFileName: false,
+	} {
+		_, err := os.Stat(filepath.Join(dir, p))
 		if exists := err == nil; exists != want {
-			t.Errorf("%s exists = %v, want %v", id, exists, want)
+			t.Errorf("%s exists = %v, want %v", p, exists, want)
+		}
+	}
+}
+
+// Before a start the last run's file goes, so its program never reads it as
+// current; the directory, which the container mounts, stays.
+func TestClearEnvFile(t *testing.T) {
+	f := newFixture(t)
+	dir := withEnvDir(t, f)
+	f.c.refresh(context.Background())
+	if err := ClearEnvFile(dir, "sb-run"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "sb-run", EnvFileName)); !os.IsNotExist(err) {
+		t.Errorf("file still there: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "sb-run")); err != nil {
+		t.Errorf("directory removed: %v", err)
+	}
+	for _, c := range []struct{ dir, id string }{{dir, "sb-run"}, {dir, "never-ran"}, {dir, "../x"}, {"", "sb-run"}} {
+		if err := ClearEnvFile(c.dir, c.id); err != nil {
+			t.Errorf("ClearEnvFile(%q, %q) = %v, want nothing to do", c.dir, c.id, err)
 		}
 	}
 }

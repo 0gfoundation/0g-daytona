@@ -98,6 +98,12 @@ func GetConfig() (*Config, error) {
 		return nil, err
 	}
 
+	// 0G: bind-mounted into sandboxes by path. Docker reads a source that is
+	// not absolute as a volume name, and ':' separates a bind's fields.
+	if d := config.SandboxEnvDir; d != "" && (!filepath.IsAbs(d) || strings.Contains(d, ":") || filepath.Clean(d) == "/") {
+		return nil, fmt.Errorf("SANDBOX_ENV_DIR must be an absolute path other than / and without ':', or empty")
+	}
+
 	if config.DaytonaApiUrl == "" {
 		// For backward compatibility
 		serverUrl := os.Getenv("SERVER_URL")
