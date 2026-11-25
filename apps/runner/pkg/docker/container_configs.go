@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/daytonaio/runner/cmd/runner/config"
+	"github.com/daytonaio/runner/internal/sandboxusage"
 	"github.com/daytonaio/runner/pkg/api/dto"
 	"github.com/daytonaio/runner/pkg/common"
 	"github.com/docker/docker/api/types/image"
@@ -103,6 +104,15 @@ func (d *DockerClient) getContainerCreateConfig(sandboxDto dto.CreateSandboxDTO,
 	labels := make(map[string]string)
 	if sandboxDto.Name != "" {
 		labels[sandboxNameLabel] = sandboxDto.Name
+	}
+	// 0G: the requested disk, which nothing else records unless Docker's
+	// filesystem is xfs, for the sandbox's environment file.
+	diskGiB := sandboxDto.StorageQuota
+	if gpuIndex != nil {
+		diskGiB = gpuSandboxDiskGiB
+	}
+	if diskGiB > 0 {
+		labels[sandboxusage.DiskLimitLabel] = sandboxusage.DiskLimitLabelValue(common.GBToBytes(float64(diskGiB)))
 	}
 	if len(sandboxDto.Volumes) > 0 {
 		volumeMountPaths := make([]string, len(sandboxDto.Volumes))
@@ -208,6 +218,11 @@ func (d *DockerClient) getContainerHostConfig(sandboxDto dto.CreateSandboxDTO, v
 
 	if len(volumeMountPathBinds) > 0 {
 		binds = append(binds, volumeMountPathBinds...)
+	}
+
+	// 0G: the sandbox's own limits and use, read-only (internal/sandboxusage).
+	if b := sandboxusage.EnvBind(d.sandboxEnvDir, sandboxDto.Id); b != "" {
+		binds = append(binds, b)
 	}
 
 	hostConfig := &container.HostConfig{

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/daytonaio/common-go/pkg/timer"
+	"github.com/daytonaio/runner/internal/sandboxusage"
 	"github.com/daytonaio/runner/pkg/api/dto"
 	"github.com/daytonaio/runner/pkg/common"
 	"github.com/docker/docker/api/types/container"
@@ -61,6 +62,12 @@ func (d *DockerClient) Start(ctx context.Context, containerId string, authToken 
 				d.logger.ErrorContext(ctx, "Failed to ensure volume FUSE mounts", "error", err)
 			}
 		}
+	}
+
+	// 0G: the sandbox's environment file still holds its last run's figures;
+	// the collector writes a current one once the container runs.
+	if err := sandboxusage.ClearEnvFile(d.sandboxEnvDir, containerId); err != nil {
+		d.logger.WarnContext(ctx, "Failed to clear the sandbox's environment file", "containerId", containerId, "error", err)
 	}
 
 	err = d.apiClient.ContainerStart(ctx, containerId, container.StartOptions{})
