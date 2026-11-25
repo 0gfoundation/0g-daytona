@@ -249,6 +249,8 @@ func (d *DockerClient) getContainerHostConfig(sandboxDto dto.CreateSandboxDTO, v
 			CPUQuota:   cpuQuota * 100000,
 			Memory:     common.GBToBytes(float64(memoryQuotaGiB)),
 			MemorySwap: common.GBToBytes(float64(memoryQuotaGiB)),
+			// 0G: a fork bomb stops at the task limit instead of at the memory cap.
+			PidsLimit: pidsLimit(d.pidsLimit),
 		}
 	}
 
@@ -359,4 +361,13 @@ func (d *DockerClient) getAndroidDeviceHostConfig(sandboxDto dto.CreateSandboxDT
 	hostConfig.Runtime = ""
 
 	return hostConfig
+}
+
+// pidsLimit is the PidsLimit for a sandbox's container: nil, which leaves
+// Docker's default (no limit), when limit is not positive.
+func pidsLimit(limit int64) *int64 {
+	if limit <= 0 {
+		return nil
+	}
+	return &limit
 }

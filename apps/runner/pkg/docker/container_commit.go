@@ -13,7 +13,9 @@ import (
 	"github.com/docker/docker/api/types/image"
 )
 
-func (d *DockerClient) commitContainer(ctx context.Context, containerId, imageName string) error {
+// changes are Dockerfile instructions applied to the new image (0G: the
+// backup's data label).
+func (d *DockerClient) commitContainer(ctx context.Context, containerId, imageName string, changes []string) error {
 	const maxRetries = 3
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
@@ -22,6 +24,7 @@ func (d *DockerClient) commitContainer(ctx context.Context, containerId, imageNa
 		commitResp, err := d.apiClient.ContainerCommit(ctx, containerId, container.CommitOptions{
 			Reference: imageName,
 			Pause:     false,
+			Changes:   changes,
 		})
 		if err == nil {
 			d.logger.InfoContext(ctx, "Container committed successfully", "containerId", containerId, "imageId", commitResp.ID)
@@ -32,7 +35,7 @@ func (d *DockerClient) commitContainer(ctx context.Context, containerId, imageNa
 		if strings.Contains(err.Error(), "Error response from daemon: failed to get digest") {
 			d.logger.WarnContext(ctx, "Commit failed with digest error, attempting export/import fallback for container", "containerId", containerId)
 
-			err = d.exportImportContainer(ctx, containerId, imageName)
+			err = d.exportImportContainer(ctx, containerId, imageName, changes)
 			if err == nil {
 				d.logger.InfoContext(ctx, "Container successfully backed up using export/import method", "containerId", containerId)
 				return nil
@@ -52,7 +55,7 @@ func (d *DockerClient) commitContainer(ctx context.Context, containerId, imageNa
 	return nil
 }
 
-func (d *DockerClient) exportImportContainer(ctx context.Context, containerId, imageName string) error {
+func (d *DockerClient) exportImportContainer(ctx context.Context, containerId, imageName string, extraChanges []string) error {
 	d.logger.InfoContext(ctx, "Exporting container and importing as image", "containerId", containerId, "imageName", imageName)
 
 	// First, inspect the container to get its configuration
@@ -121,6 +124,10 @@ func (d *DockerClient) exportImportContainer(ctx context.Context, containerId, i
 	if containerInfo.Config.User != "" {
 		changes = append(changes, fmt.Sprintf("USER %s", containerInfo.Config.User))
 	}
+
+	// 0G: an import keeps none of the container's labels; the caller's
+	// changes carry the ones that must survive (the backup's data label).
+	changes = append(changes, extraChanges...)
 
 	// Apply the changes
 	importOptions.Changes = changes

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/daytonaio/runner/internal/sandboxusage"
 	"github.com/daytonaio/runner/pkg/api/dto"
 	"github.com/daytonaio/runner/pkg/models/enums"
 
@@ -75,7 +76,7 @@ func (d *DockerClient) createBackup(containerId string, backupDto dto.CreateBack
 		d.logger.DebugContext(ctx, "Failed to update backup info", "error", cacheErr)
 	}
 
-	err := d.commitContainer(ctx, containerId, backupDto.Snapshot)
+	err := d.commitContainer(ctx, containerId, backupDto.Snapshot, d.backupDataLabel(ctx, containerId))
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			cacheErr := d.backupInfoCache.SetBackupState(ctx, containerId, enums.BackupStateNone, backupDto.Snapshot, nil)
@@ -153,4 +154,34 @@ func (d *DockerClient) createBackup(containerId string, backupDto dto.CreateBack
 	}
 
 	return nil
+}
+
+// backupDataLabel is the commit change that records, in a backup image, the
+// sandbox's own data: what its image already carried plus its writable layer
+// (0g-sandbox#148). A sandbox restored from the backup starts a new writable
+// layer, so without this its earlier data would drop out of the runner's
+// usage metrics.
+//
+// Without the container's labels it changes nothing: the backup then keeps
+// the label the container inherited, rather than recording 0.
+func (d *DockerClient) backupDataLabel(ctx context.Context, containerId string) []string {
+	info, _, err := d.apiClient.ContainerInspectWithRaw(ctx, containerId, true)
+	if err != nil {
+		d.logger.WarnContext(ctx, "Sizing the container for its backup label failed; recording only what it carried", "containerId", containerId, "error", err)
+		if info, _, err = d.apiClient.ContainerInspectWithRaw(ctx, containerId, false); err != nil {
+			d.logger.WarnContext(ctx, "Reading the container for its backup label failed; the backup keeps the label it inherits", "containerId", containerId, "error", err)
+			return nil
+		}
+	} else if info.ContainerJSONBase != nil && info.SizeRw != nil && *info.SizeRw < 0 {
+		// Docker reports a size it could not take as -1, with no error.
+		d.logger.WarnContext(ctx, "Docker could not size the container's writable layer; its backup label records only what it carried", "containerId", containerId)
+	}
+	if info.Config == nil {
+		return nil
+	}
+	var sizeRw int64
+	if info.ContainerJSONBase != nil && info.SizeRw != nil {
+		sizeRw = *info.SizeRw // BackupDataLabel counts a negative size as 0
+	}
+	return []string{sandboxusage.BackupDataLabel(info.Config.Labels, sizeRw)}
 }

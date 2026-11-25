@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/daytonaio/runner/internal/sandboxusage"
 	"github.com/daytonaio/runner/pkg/api/dto"
 )
 
@@ -78,7 +79,8 @@ func (d *DockerClient) CreateSnapshotFromSandbox(ctx context.Context, sandboxID 
 
 	tempRef := snapshotTempImageRef(sandboxID)
 
-	if err := d.commitContainer(ctx, sandboxID, tempRef); err != nil {
+	// 0G: sandboxes created from this snapshot don't own its data.
+	if err := d.commitContainer(ctx, sandboxID, tempRef, []string{sandboxusage.ClearedDataLabel}); err != nil {
 		return nil, err
 	}
 
